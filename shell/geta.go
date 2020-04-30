@@ -1,6 +1,7 @@
 package shell
 
 import (
+  "os"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,7 +18,7 @@ func getACmd(ctx *ShellCtxt) *ishell.Cmd {
 
 			flagSet := flag.NewFlagSet("geta", flag.ContinueOnError)
 			addPageNumbers := flagSet.Bool("p", false, "add page numbers")
-			allPages := flagSet.Bool("a", false, "all pages")
+			allPages := flagSet.Bool("a", true, "all pages")
 			annotationsOnly := flagSet.Bool("n", false, "annotations only")
 			if err := flagSet.Parse(c.Args); err != nil {
 				if err != flag.ErrHelp {
@@ -42,7 +43,7 @@ func getACmd(ctx *ShellCtxt) *ishell.Cmd {
 
 			c.Println(fmt.Sprintf("downloading: [%s]...", srcName))
 
-			zipName := fmt.Sprintf("%s.zip", node.Name())
+			zipName := fmt.Sprintf("_%s.zip", node.Name())
 			err = ctx.api.FetchDocument(node.Document.ID, zipName)
 
 			if err != nil {
@@ -50,7 +51,7 @@ func getACmd(ctx *ShellCtxt) *ishell.Cmd {
 				return
 			}
 
-			pdfName := fmt.Sprintf("%s-annotations.pdf", node.Name())
+			pdfName := fmt.Sprintf("%s.pdf", node.Name())
 			options := annotations.PdfGeneratorOptions{AddPageNumbers: *addPageNumbers, AllPages: *allPages, AnnotationsOnly: *annotationsOnly}
 			generator := annotations.CreatePdfGenerator(zipName, pdfName, options)
 			err = generator.Generate()
@@ -61,6 +62,7 @@ func getACmd(ctx *ShellCtxt) *ishell.Cmd {
 			}
 
 			c.Printf("Annotations generated in: %s\n", pdfName)
+      os.Remove(zipName)
 		},
 	}
 }
