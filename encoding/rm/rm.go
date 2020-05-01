@@ -103,7 +103,7 @@ type BrushSize float32
 // 3 different brush sizes are noticed.
 const (
 	Small  BrushSize = 1.875
-	Medium BrushSize = 2.0
+	Medium BrushSize = 2.000
 	Large  BrushSize = 2.125
 )
 
