@@ -2,9 +2,8 @@ package annotations
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-
+ 	"errors"
 	"os"
 
 	"github.com/juruen/rmapi/archive"
@@ -31,6 +30,7 @@ type PdfGenerator struct {
 	options        PdfGeneratorOptions
 	pdfReader      *pdf.PdfReader
 	template       bool
+  newcolors      bool // will use red and green if annotating pdf
 }
 
 type PdfGeneratorOptions struct {
@@ -43,8 +43,8 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 	return &PdfGenerator{zipName: zipName, outputFilePath: outputFilePath, options: options}
 }
 
-func normalized(p1 rm.Point, ratioX float64) (float64, float64) {
-	return float64(p1.X) * ratioX, float64(p1.Y) * ratioX
+func normalized(p1 rm.Point, ratioX float64, shiftX float64, shiftY float64) (float64, float64) {
+  return float64(p1.X) * ratioX + shiftX , float64(p1.Y) * ratioX - shiftY
 }
 
 func (p *PdfGenerator) Generate() error {
@@ -91,19 +91,12 @@ func (p *PdfGenerator) Generate() error {
 			continue
 		}
 
-		page, err := p.addBackgroundPage(c, i+1)
+
+		page, shiftX, shiftY, scale, err := p.addBackgroundPage(c, i+1)
 		if err != nil {
 			return err
 		}
 
-		ratio := c.Height() / c.Width()
-
-		var scale float64
-		if ratio < 1.33 {
-			scale = c.Width() / DeviceWidth
-		} else {
-			scale = c.Height() / DeviceHeight
-		}
 		if page == nil {
 			log.Error.Fatal("page is null")
 		}
@@ -131,8 +124,8 @@ func (p *PdfGenerator) Generate() error {
 
 				if line.BrushType == rm.HighlighterV5 {
 					last := len(line.Points) - 1
-					x1, y1 := normalized(line.Points[0], scale)
-					x2, _ := normalized(line.Points[last], scale)
+					x1, y1 := normalized(line.Points[0], scale, shiftX, shiftY)
+					x2, _ := normalized(line.Points[last], scale, shiftX, shiftY)
 					// make horizontal lines only, use y1
 					width := scale * 30
 					y1 += width / 2
@@ -149,20 +142,38 @@ func (p *PdfGenerator) Generate() error {
 				} else {
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
-						x1, y1 := normalized(line.Points[i], scale)
+						x1, y1 := normalized(line.Points[i], scale, shiftX, shiftY)
 						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
 					}
+					contentCreator.Add_q()
+          //  contentCreator.Add_w(float64(line.BrushSize * 100))
+					//  contentCreator.Add_w(float64(.7))
+					switch line.BrushSize {
+          case rm.Small:
+           contentCreator.Add_w(float64(0.5))
+         case rm.Medium:
+           contentCreator.Add_w(float64(0.5))
+         case rm.Large:
+           contentCreator.Add_w(float64(0.9))
+          }
 
-					contentCreator.Add_w(float64(line.BrushSize / 100))
-
+          if (p.newcolors) {
 					switch line.BrushColor {
 					case rm.Black:
-						contentCreator.Add_rg(1.0, 1.0, 1.0)
-					case rm.White:
 						contentCreator.Add_rg(0.0, 0.0, 0.0)
 					case rm.Grey:
 						contentCreator.Add_rg(0.8, 0.8, 0.8)
 					}
+          } else {
+					switch line.BrushColor {
+          case rm.Black:
+						contentCreator.Add_rg(0.8, 0.0, 1.0)
+					case rm.White:
+						contentCreator.Add_rg(1.0, 1.0, 1.0)
+					case rm.Grey:
+						contentCreator.Add_rg(0.0, 0.7, 0.0)
+					}
+          }
 
 					//TODO: use bezier
 					draw.DrawPathWithCreator(path, contentCreator)
@@ -183,8 +194,11 @@ func (p *PdfGenerator) Generate() error {
 }
 
 func (p *PdfGenerator) initBackgroundPages(pdfArr []byte) error {
+  p.newcolors = false
+  // use black and grey if not annotating a pdf
 	if len(pdfArr) > 0 {
 		pdfReader, err := pdf.NewPdfReader(bytes.NewReader(pdfArr))
+    p.newcolors = true
 		if err != nil {
 			return err
 		}
@@ -198,28 +212,53 @@ func (p *PdfGenerator) initBackgroundPages(pdfArr []byte) error {
 	return nil
 }
 
-func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.PdfPage, error) {
+func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.PdfPage, float64, float64, float64, error) {
 	var page *pdf.PdfPage
+  var shiftX float64
+  var shiftY float64
+  var scale float64
 
 	if !p.template && !p.options.AnnotationsOnly {
 		tmpPage, err := p.pdfReader.GetPage(pageNum)
 		if err != nil {
-			return nil, err
-		}
-		mbox, err := tmpPage.GetMediaBox()
-		if err != nil {
-			return nil, err
+			return nil, 0., 0., 0., err
 		}
 
+		tbox := tmpPage.TrimBox
+
 		// TODO: adjust the page if cropped
-		pageHeight := mbox.Ury - mbox.Lly
-		pageWidth := mbox.Urx - mbox.Llx
+		pageHeight := tbox.Ury  - tbox.Lly
+		pageWidth := tbox.Urx  - tbox.Llx
+    shiftX = tbox.Lly
+    shiftY = tbox.Lly
+
+
+    h := pageHeight / DeviceHeight
+    w := pageWidth / DeviceWidth
+
+    over := (DeviceHeight*w - pageHeight)/2/w
+    if (over < 0) {over = 0}
+
+    scale = w
+    if (h/w > 1.0) { scale = h } // else { scale := w }
+
+    tmpPage.TrimBox.Lly -= over/2
+
+    tmpPage.CropBox.Llx = 0
+    tmpPage.CropBox.Lly -= over/2
+
+    tmpPage.MediaBox.Llx = 0
+    tmpPage.MediaBox.Lly -= over/2
 		// use the pdf's page size
 		c.SetPageSize(creator.PageSize{pageWidth, pageHeight})
 		c.AddPage(tmpPage)
+    shiftY -= over
 		page = tmpPage
 	} else {
 		page = c.NewPage()
+    shiftX = 0
+    shiftY = 0
+    scale = 1
 	}
 
 	if p.options.AddPageNumbers {
@@ -232,5 +271,5 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.
 			block.Draw(p)
 		})
 	}
-	return page, nil
+	return page, shiftX, shiftY, scale , nil
 }
