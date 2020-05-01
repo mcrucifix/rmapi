@@ -282,8 +282,6 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, orientation string,
     pscale.scaleX = scale
     pscale.scaleY = scale
 
-    print ("over =",over)
-
     if (cropped) {
     tmpPage.TrimBox.Lly -= over/2
 
