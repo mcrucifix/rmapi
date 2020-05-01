@@ -157,21 +157,22 @@ func (p *PdfGenerator) Generate() error {
            contentCreator.Add_w(float64(0.9))
           }
 
+
           if (p.newcolors) {
 					switch line.BrushColor {
 					case rm.Black:
-						contentCreator.Add_rg(0.0, 0.0, 0.0)
+						contentCreator.Add_RG(0.7, 0.0, 0.0)
 					case rm.Grey:
-						contentCreator.Add_rg(0.8, 0.8, 0.8)
+						contentCreator.Add_RG(0.0, 0.7, 0.0)
 					}
           } else {
 					switch line.BrushColor {
           case rm.Black:
-						contentCreator.Add_rg(0.8, 0.0, 1.0)
+						contentCreator.Add_RG(0.0, 0.0, 0.0)
 					case rm.White:
-						contentCreator.Add_rg(1.0, 1.0, 1.0)
+						contentCreator.Add_RG(1.0, 1.0, 1.0)
 					case rm.Grey:
-						contentCreator.Add_rg(0.0, 0.7, 0.0)
+						contentCreator.Add_RG(0.7, 0.7, 0.7)
 					}
           }
 
@@ -250,7 +251,7 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.
     tmpPage.MediaBox.Llx = 0
     tmpPage.MediaBox.Lly -= over/2
 		// use the pdf's page size
-		c.SetPageSize(creator.PageSize{pageWidth, pageHeight})
+		c.SetPageSize(creator.PageSize{pageWidth, pageHeight +over })
 		c.AddPage(tmpPage)
     shiftY -= over
 		page = tmpPage
