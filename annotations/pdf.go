@@ -24,6 +24,14 @@ const (
 
 var rmPageSize = creator.PageSize{445, 594}
 
+type PageScale struct {
+   scaleX     float64
+   scaleY     float64
+   shiftX     float64
+   shiftY     float64
+   rotate  bool
+}
+
 type PdfGenerator struct {
 	zipName        string
 	outputFilePath string
@@ -43,8 +51,12 @@ func CreatePdfGenerator(zipName, outputFilePath string, options PdfGeneratorOpti
 	return &PdfGenerator{zipName: zipName, outputFilePath: outputFilePath, options: options}
 }
 
-func normalized(p1 rm.Point, ratioX float64, shiftX float64, shiftY float64) (float64, float64) {
-  return float64(p1.X) * ratioX + shiftX , float64(p1.Y) * ratioX - shiftY
+func normalized(p1 rm.Point, pscale PageScale) (float64, float64) {
+  if (pscale.rotate) {
+  return -float64(p1.Y) * pscale.scaleY + pscale.shiftY , float64(p1.X) * pscale.scaleX - pscale.shiftX
+} else {
+  return float64(p1.X) * pscale.scaleX + pscale.shiftX , float64(p1.Y) * pscale.scaleY - pscale.shiftY
+}
 }
 
 func (p *PdfGenerator) Generate() error {
@@ -65,6 +77,9 @@ func (p *PdfGenerator) Generate() error {
 	if err != nil {
 		return err
 	}
+
+  orientation := zip.Content.Orientation
+
 	if zip.Content.FileType == "epub" {
 		return errors.New("only pdf and notebooks supported")
 	}
@@ -92,7 +107,7 @@ func (p *PdfGenerator) Generate() error {
 		}
 
 
-		page, shiftX, shiftY, scale, err := p.addBackgroundPage(c, i+1)
+		page, pscale, err := p.addBackgroundPage(c, orientation, i+1)
 		if err != nil {
 			return err
 		}
@@ -124,10 +139,10 @@ func (p *PdfGenerator) Generate() error {
 
 				if line.BrushType == rm.HighlighterV5 {
 					last := len(line.Points) - 1
-					x1, y1 := normalized(line.Points[0], scale, shiftX, shiftY)
-					x2, _ := normalized(line.Points[last], scale, shiftX, shiftY)
+					x1, y1 := normalized(line.Points[0], pscale)
+					x2, _ := normalized(line.Points[last], pscale)
 					// make horizontal lines only, use y1
-					width := scale * 30
+					width := pscale.scaleX * 30
 					y1 += width / 2
 
 					lineDef := annotator.LineAnnotationDef{X1: x1 - 1, Y1: c.Height() - y1, X2: x2, Y2: c.Height() - y1}
@@ -142,7 +157,7 @@ func (p *PdfGenerator) Generate() error {
 				} else {
 					path := draw.NewPath()
 					for i := 0; i < len(line.Points); i++ {
-						x1, y1 := normalized(line.Points[i], scale, shiftX, shiftY)
+						x1, y1 := normalized(line.Points[i], pscale)
 						path = path.AppendPoint(draw.NewPoint(x1, c.Height()-y1))
 					}
 					contentCreator.Add_q()
@@ -213,36 +228,63 @@ func (p *PdfGenerator) initBackgroundPages(pdfArr []byte) error {
 	return nil
 }
 
-func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.PdfPage, float64, float64, float64, error) {
+func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, orientation string, pageNum int) (*pdf.PdfPage, PageScale, error) {
 	var page *pdf.PdfPage
-  var shiftX float64
-  var shiftY float64
-  var scale float64
+  var pscale PageScale
+
+  pscale.rotate = (orientation == "landscape")
 
 	if !p.template && !p.options.AnnotationsOnly {
 		tmpPage, err := p.pdfReader.GetPage(pageNum)
 		if err != nil {
-			return nil, 0., 0., 0., err
+			return nil, pscale, err
 		}
 
-		tbox := tmpPage.TrimBox
+    var tbox *pdf.PdfRectangle
+
+    tbox = tmpPage.TrimBox
+    cropped := true
+
+    if (tbox == nil) {
+      // no trimbox, so no need to crop
+      tbox,err = tmpPage.GetMediaBox()
+      cropped = false
+    }
+
 
 		// TODO: adjust the page if cropped
-		pageHeight := tbox.Ury  - tbox.Lly
-		pageWidth := tbox.Urx  - tbox.Llx
-    shiftX = tbox.Lly
-    shiftY = tbox.Lly
+	 pageHeight := tbox.Ury  - tbox.Lly
+   pageWidth := tbox.Urx  - tbox.Llx
+   pscale.shiftX = tbox.Lly
+   pscale.shiftY = tbox.Lly
+
+   myDeviceHeight := DeviceHeight
+   myDeviceWidth := DeviceWidth
+
+    if (pscale.rotate) {
+    myDeviceWidth = DeviceHeight
+    myDeviceHeight = DeviceWidth
+    }
+
+    h := pageHeight / float64(myDeviceHeight)
+    w := pageWidth / float64(myDeviceWidth)
 
 
-    h := pageHeight / DeviceHeight
-    w := pageWidth / DeviceWidth
-
-    over := (DeviceHeight*w - pageHeight)/2/w
+    over := (float64(myDeviceHeight)*w - pageHeight)/2/w
+    if (pscale.rotate) {
+    over = (float64(myDeviceWidth)*h - pageWidth)/2/h
+    }
     if (over < 0) {over = 0}
 
-    scale = w
-    if (h/w > 1.0) { scale = h } // else { scale := w }
+    scale := w
+    if (h > w && !pscale.rotate) { scale = h } // else { scale := w }
 
+    pscale.scaleX = scale
+    pscale.scaleY = scale
+
+    print ("over =",over)
+
+    if (cropped) {
     tmpPage.TrimBox.Lly -= over/2
 
     tmpPage.CropBox.Llx = 0
@@ -250,16 +292,22 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.
 
     tmpPage.MediaBox.Llx = 0
     tmpPage.MediaBox.Lly -= over/2
+  }
 		// use the pdf's page size
 		c.SetPageSize(creator.PageSize{pageWidth, pageHeight +over })
 		c.AddPage(tmpPage)
-    shiftY -= over
+    pscale.shiftY -= over
+    if (pscale.rotate) {
+    pscale.shiftY += pageWidth
+    }
 		page = tmpPage
 	} else {
+		c.SetPageSize(creator.PageSize{DeviceWidth,DeviceHeight})
 		page = c.NewPage()
-    shiftX = 0
-    shiftY = 0
-    scale = 1
+    pscale.shiftX = 0
+    pscale.shiftY = 0
+    pscale.scaleX = 1
+    pscale.scaleY = 1
 	}
 
 	if p.options.AddPageNumbers {
@@ -272,5 +320,5 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, pageNum int) (*pdf.
 			block.Draw(p)
 		})
 	}
-	return page, shiftX, shiftY, scale , nil
+	return page, pscale , nil
 }
