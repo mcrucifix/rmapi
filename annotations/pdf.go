@@ -261,6 +261,9 @@ func (p *PdfGenerator) addBackgroundPage(c *creator.Creator, orientation string,
    myDeviceHeight := DeviceHeight
    myDeviceWidth := DeviceWidth
 
+   // to be verified. It seems that it does not rotate in this case
+   if (pageHeight > pageWidth) {pscale.rotate = false}
+
     if (pscale.rotate) {
     myDeviceWidth = DeviceHeight
     myDeviceHeight = DeviceWidth
