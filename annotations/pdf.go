@@ -136,6 +136,9 @@ func (p *PdfGenerator) Generate() error {
 				if line.BrushType == rm.Eraser {
 					continue
 				}
+				if line.BrushType == rm.EraseArea {
+					continue
+				}
 
 				if line.BrushType == rm.HighlighterV5 {
 					last := len(line.Points) - 1
